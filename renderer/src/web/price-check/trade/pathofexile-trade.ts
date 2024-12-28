@@ -4,7 +4,7 @@ import {
   StatFilter,
   INTERNAL_TRADE_IDS,
   InternalTradeId,
-} from "../filters/interfaces";
+} from "@/web/price-check/filters/interfaces";
 import { setProperty as propSet } from "dot-prop";
 import { DateTime } from "luxon";
 import { Host } from "@/web/background/IPC";
@@ -15,11 +15,13 @@ import {
   adjustRateLimits,
   RATE_LIMIT_RULES,
   preventQueueCreation,
-} from "./common";
+} from "@/web/price-check/trade/common";
 import { PSEUDO_ID_TO_TRADE_REQUEST, STAT_BY_REF } from "@/assets/data";
-import { RateLimiter } from "./RateLimiter";
+import { RateLimiter } from "@/web/price-check/trade/RateLimiter";
 import { ModifierType } from "@/parser/modifiers";
-import { Cache } from "./Cache";
+import { Cache } from "@/web/price-check/trade/Cache";
+import { Config, AppConfig } from "@/web/Config";
+import type { PriceCheckWidget } from "@/web/overlay/widgets";
 
 export const CATEGORY_TO_TRADE_ID = new Map([
   [ItemCategory.Map, "map"],
@@ -207,6 +209,7 @@ export interface SearchResult {
   result: string[];
   total: number;
   inexact?: boolean;
+  ratio?: number; // Divine:Exalt ratio for price normalization
 }
 
 interface FetchResult {
@@ -246,8 +249,10 @@ export interface PricingResult {
   relativeDate: string;
   priceAmount: number;
   priceCurrency: string;
-  isMine: boolean;
+  normalizedPrice?: number;
+  displayPrice: string;
   hasNote: boolean;
+  isMine: boolean;
   accountName: string;
   accountStatus: "offline" | "online" | "afk";
   ign: string;
@@ -271,7 +276,7 @@ export function createTradeRequest(
       filters: {},
     },
     sort: {
-      price: "asc",
+      price: "asc"
     },
   };
   const { query } = body;
@@ -705,7 +710,7 @@ export async function requestTradeResultList(
         method: "POST",
         headers: {
           "Accept": "application/json",
-          "Content-Type": "application/json",
+          "Content-Type": "application/json"
         },
         body: JSON.stringify(body),
       },
@@ -732,7 +737,7 @@ export async function requestTradeResultList(
 export async function requestResults(
   queryId: string,
   resultIds: string[],
-  opts: { accountName: string },
+  opts: { accountName: string; divineExaltRatio?: number }
 ): Promise<PricingResult[]> {
   let data = cache.get<FetchResult[]>(resultIds);
 
@@ -741,6 +746,12 @@ export async function requestResults(
 
     const response = await Host.proxy(
       `${getTradeEndpoint()}/api/trade2/fetch/${resultIds.join(",")}?query=${queryId}`,
+      {
+        headers: {
+          "Accept": "application/json",
+          "Content-Type": "application/json"
+        }
+      }
     );
     adjustRateLimits(RATE_LIMIT_RULES.FETCH, response.headers);
 
@@ -761,6 +772,19 @@ export async function requestResults(
   }
 
   return data.map<PricingResult>((result) => {
+    const priceAmount = result.listing.price?.amount ?? 0;
+    const priceCurrency = result.listing.price?.currency ?? "no price";
+    
+    // Calculate normalized price in divine if ratio is provided
+    const normalizedPrice = opts.divineExaltRatio && priceCurrency === "exalted" 
+      ? priceAmount / opts.divineExaltRatio 
+      : priceAmount;
+
+    // Format the display price to show original and normalized when needed
+    const displayPrice = opts.divineExaltRatio && priceCurrency === "exalted"
+      ? `${normalizedPrice.toFixed(2)} divine (${priceAmount} exalted)`
+      : `${priceAmount} ${priceCurrency}`;
+
     return {
       id: result.id,
       itemLevel:
@@ -776,8 +800,10 @@ export async function requestResults(
         DateTime.fromISO(result.listing.indexed).toRelative({
           style: "short",
         }) ?? "",
-      priceAmount: result.listing.price?.amount ?? 0,
-      priceCurrency: result.listing.price?.currency ?? "no price",
+      priceAmount,
+      priceCurrency,
+      normalizedPrice,
+      displayPrice,
       hasNote: result.item.note != null,
       isMine: result.listing.account.name === opts.accountName,
       ign: result.listing.account.lastCharacterName,
@@ -855,4 +881,90 @@ function pseudoPseudoToQuery(id: string, stat: StatFilter) {
   filter.value = { ...getMinMax(stat.roll) };
   filter.disabled = stat.disabled;
   return filter;
+}
+
+export async function requestTradeResultListWithNormalization(
+  request: TradeRequest,
+  leagueId: string
+): Promise<SearchResult> {
+  const config = AppConfig<PriceCheckWidget>("price-check")!;
+  if (!config.normalizePricing) {
+    return await requestTradeResultList(request, leagueId);
+  }
+
+  // Add delay between batches to respect per-minute limit
+  const batchDelay = 5000; // 5 seconds between batches
+
+  // First batch: No price filter
+  const noFilterResult = await requestTradeResultList(request, leagueId);
+  await new Promise(resolve => setTimeout(resolve, batchDelay));
+
+  // Second batch: Divine filter
+  const divineRequest = structuredClone(request);
+  if (!divineRequest.query.filters.trade_filters) {
+    divineRequest.query.filters.trade_filters = { filters: {} };
+  }
+  divineRequest.query.filters.trade_filters.filters.price = { option: "divine" };
+  const divineResult = await requestTradeResultList(divineRequest, leagueId);
+  await new Promise(resolve => setTimeout(resolve, batchDelay));
+
+  // Third batch: Exalted filter
+  const exaltedRequest = structuredClone(request);
+  if (!exaltedRequest.query.filters.trade_filters) {
+    exaltedRequest.query.filters.trade_filters = { filters: {} };
+  }
+  exaltedRequest.query.filters.trade_filters.filters.price = { option: "exalted" };
+  const exaltedResult = await requestTradeResultList(exaltedRequest, leagueId);
+
+  return combineAndNormalizeResults(noFilterResult, divineResult, exaltedResult, config.divineExaltRatio);
+}
+
+function combineAndNormalizeResults(
+  allResults: SearchResult,
+  divineResults: SearchResult,
+  exaltedResults: SearchResult,
+  ratio: number
+): SearchResult {
+  // Create a Set to track seen IDs
+  const seenIds = new Set<string>();
+  const normalizedResults: Array<{ id: string; price: number }> = [];
+
+  // Process exalted results first (they should appear at the top if cheaper)
+  for (const id of exaltedResults.result) {
+    if (!seenIds.has(id)) {
+      seenIds.add(id);
+      // Convert exalt price to divine equivalent (e.g., 20 exalts at 89:1 = 0.22 divine)
+      normalizedResults.push({ id, price: 1/ratio });
+    }
+  }
+
+  // Process divine results
+  for (const id of divineResults.result) {
+    if (!seenIds.has(id)) {
+      seenIds.add(id);
+      normalizedResults.push({ id, price: 1 });
+    }
+  }
+
+  // Process remaining results from the unfiltered query
+  for (const id of allResults.result) {
+    if (!seenIds.has(id)) {
+      seenIds.add(id);
+      // These will be sorted last since we don't know their price
+      normalizedResults.push({ id, price: Number.MAX_VALUE });
+    }
+  }
+
+  // Sort by normalized price
+  normalizedResults.sort((a, b) => a.price - b.price);
+
+  const combined: SearchResult = {
+    id: `${allResults.id}-${divineResults.id}-${exaltedResults.id}`,
+    result: normalizedResults.map(r => r.id),
+    total: seenIds.size,
+    inexact: allResults.inexact || divineResults.inexact || exaltedResults.inexact,
+    ratio // Include ratio for the UI to use
+  };
+
+  return combined;
 }

@@ -214,6 +214,8 @@ export const defaultConfig = (): Config => ({
       showCursor: true,
       requestPricePrediction: false,
       rememberCurrency: false,
+      normalizePricing: false,
+      divineExaltRatio: 180,
     } as widget.PriceCheckWidget,
     {
       wmId: 3,

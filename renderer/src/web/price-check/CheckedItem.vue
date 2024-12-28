@@ -95,6 +95,7 @@ import { PriceCheckWidget } from "../overlay/interfaces";
 import { useLeagues } from "@/web/background/Leagues";
 
 let _showSupportLinksCounter = 0;
+let searchDebounceTimeout: number | null = null;
 
 export default defineComponent({
   name: "CheckedItem",
@@ -231,6 +232,16 @@ export default defineComponent({
       { deep: true },
     );
 
+    // Helper function to debounce search
+    function debounceSearch() {
+      if (searchDebounceTimeout) {
+        clearTimeout(searchDebounceTimeout);
+      }
+      searchDebounceTimeout = window.setTimeout(() => {
+        doSearch.value = true;
+      }, 500); // 500ms debounce
+    }
+
     watch(
       () => [props.item, JSON.stringify(itemFilters.value.trade)],
       (curr, prev) => {
@@ -241,7 +252,7 @@ export default defineComponent({
 
         if (cItem === pItem && cTrade !== pTrade) {
           nextTick(() => {
-            doSearch.value = true;
+            debounceSearch(); // Use debounced search instead of immediate
           });
         }
       },

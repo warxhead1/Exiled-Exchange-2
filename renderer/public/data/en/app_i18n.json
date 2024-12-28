@@ -323,7 +323,10 @@
     "auto_search": "Perform an auto search, when pressing",
     "select_stock": "Always select \"Stock\" filter",
     "show_prediction": "Show price prediction",
-    "remember_currency": "Remember the Buyout Currency filter"
+    "remember_currency": "Remember the Buyout Currency filter",
+    "normalize_pricing": "Normalize pricing",
+    "divine_exalt_ratio": "Divine to Exalt ratio:",
+    "chaos_per_divine": "chaos per divine"
   },
   "poe2_new": {
     "beta_warning": "This is in BETA for POE2, things will not work always as expected.",

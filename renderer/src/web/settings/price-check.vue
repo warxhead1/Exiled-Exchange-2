@@ -68,6 +68,15 @@
     <ui-checkbox class="mb-4" v-model="rememberCurrency">{{
       t(":remember_currency")
     }}</ui-checkbox>
+    <ui-checkbox class="mb-4" v-model="normalizePricing">{{
+      t(":normalize_pricing")
+    }}</ui-checkbox>
+    <div v-if="normalizePricing" class="mb-4 flex items-center">
+      <span class="mr-2">{{ t(":divine_exalt_ratio") }}</span>
+      <input v-model.number="divineExaltRatio"
+        class="rounded bg-gray-900 px-1 block w-16 mb-1 font-poe text-center" />
+      <span class="ml-2">{{ t(":chaos_per_divine") }}</span>
+    </div>
     <ui-checkbox class="mb-4" v-model="activateStockFilter">{{
       t(":select_stock")
     }}</ui-checkbox>
@@ -194,6 +203,14 @@ export default defineComponent({
       rememberCurrency: configModelValue(
         () => configWidget.value,
         "rememberCurrency",
+      ),
+      normalizePricing: configModelValue(
+        () => configWidget.value,
+        "normalizePricing",
+      ),
+      divineExaltRatio: configModelValue(
+        () => configWidget.value,
+        "divineExaltRatio",
       ),
       searchStatRange: computed<number>({
         get() {

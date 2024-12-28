@@ -44,6 +44,8 @@ export interface PriceCheckWidget extends Widget {
   builtinBrowser: boolean;
   usePseudo: boolean;
   rememberCurrency: boolean;
+  normalizePricing: boolean;
+  divineExaltRatio: number;
 }
 
 export interface StopwatchWidget extends Widget {

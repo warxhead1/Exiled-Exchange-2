@@ -142,6 +142,7 @@ import {
   createTradeRequest,
   PricingResult,
   SearchResult,
+  requestTradeResultListWithNormalization,
 } from "./pathofexile-trade";
 import { getTradeEndpoint } from "./common";
 import { AppConfig } from "@/web/Config";
@@ -208,10 +209,12 @@ function useTradeApi() {
 
       const _searchId = searchId;
       const request = createTradeRequest(filters, stats, item);
-      const _searchResult = await requestTradeResultList(
-        request,
-        filters.trade.league,
-      );
+      const widget = AppConfig<PriceCheckWidget>("price-check")!;
+      
+      const _searchResult = widget.normalizePricing
+        ? await requestTradeResultListWithNormalization(request, filters.trade.league)
+        : await requestTradeResultList(request, filters.trade.league);
+
       if (_searchId !== searchId) {
         return;
       }
@@ -224,7 +227,10 @@ function useTradeApi() {
             ? requestResults(
                 _searchResult.id,
                 _searchResult.result.slice(0, 10),
-                { accountName: AppConfig().accountName },
+                { 
+                  accountName: AppConfig().accountName,
+                  divineExaltRatio: _searchResult.ratio // Pass the ratio for price normalization
+                },
               ).then((results) => {
                 _fetchResults.push(...results);
               })
@@ -234,7 +240,10 @@ function useTradeApi() {
             ? requestResults(
                 _searchResult.id,
                 _searchResult.result.slice(10, 20),
-                { accountName: AppConfig().accountName },
+                { 
+                  accountName: AppConfig().accountName,
+                  divineExaltRatio: _searchResult.ratio // Pass the ratio for price normalization
+                },
               ).then((results) =>
                 r1.then(() => {
                   _fetchResults.push(...results);
