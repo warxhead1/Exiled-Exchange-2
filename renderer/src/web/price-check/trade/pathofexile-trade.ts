@@ -910,3 +910,89 @@ function pseudoPseudoToQuery(id: string, stat: StatFilter) {
   filter.disabled = stat.disabled;
   return filter;
 }
+
+export async function requestTradeResultListWithNormalization(
+  request: TradeRequest,
+  leagueId: string
+): Promise<SearchResult> {
+  const config = AppConfig<PriceCheckWidget>("price-check")!;
+  if (!config.normalizePricing) {
+    return await requestTradeResultList(request, leagueId);
+  }
+
+  // Add delay between batches to respect per-minute limit
+  const batchDelay = 5000; // 5 seconds between batches
+
+  // First batch: No price filter
+  const noFilterResult = await requestTradeResultList(request, leagueId);
+  await new Promise(resolve => setTimeout(resolve, batchDelay));
+
+  // Second batch: Divine filter
+  const divineRequest = structuredClone(request);
+  if (!divineRequest.query.filters.trade_filters) {
+    divineRequest.query.filters.trade_filters = { filters: {} };
+  }
+  divineRequest.query.filters.trade_filters.filters.price = { option: "divine" };
+  const divineResult = await requestTradeResultList(divineRequest, leagueId);
+  await new Promise(resolve => setTimeout(resolve, batchDelay));
+
+  // Third batch: Exalted filter
+  const exaltedRequest = structuredClone(request);
+  if (!exaltedRequest.query.filters.trade_filters) {
+    exaltedRequest.query.filters.trade_filters = { filters: {} };
+  }
+  exaltedRequest.query.filters.trade_filters.filters.price = { option: "exalted" };
+  const exaltedResult = await requestTradeResultList(exaltedRequest, leagueId);
+
+  return combineAndNormalizeResults(noFilterResult, divineResult, exaltedResult, config.divineExaltRatio);
+}
+
+function combineAndNormalizeResults(
+  allResults: SearchResult,
+  divineResults: SearchResult,
+  exaltedResults: SearchResult,
+  ratio: number
+): SearchResult {
+  // Create a Set to track seen IDs
+  const seenIds = new Set<string>();
+  const normalizedResults: Array<{ id: string; price: number }> = [];
+
+  // Process exalted results first (they should appear at the top if cheaper)
+  for (const id of exaltedResults.result) {
+    if (!seenIds.has(id)) {
+      seenIds.add(id);
+      // Convert exalt price to divine equivalent (e.g., 20 exalts at 89:1 = 0.22 divine)
+      normalizedResults.push({ id, price: 1/ratio });
+    }
+  }
+
+  // Process divine results
+  for (const id of divineResults.result) {
+    if (!seenIds.has(id)) {
+      seenIds.add(id);
+      normalizedResults.push({ id, price: 1 });
+    }
+  }
+
+  // Process remaining results from the unfiltered query
+  for (const id of allResults.result) {
+    if (!seenIds.has(id)) {
+      seenIds.add(id);
+      // These will be sorted last since we don't know their price
+      normalizedResults.push({ id, price: Number.MAX_VALUE });
+    }
+  }
+
+  // Sort by normalized price
+  normalizedResults.sort((a, b) => a.price - b.price);
+
+  const combined: SearchResult = {
+    id: `${allResults.id}-${divineResults.id}-${exaltedResults.id}`,
+    result: normalizedResults.map(r => r.id),
+    total: seenIds.size,
+    inexact: allResults.inexact || divineResults.inexact || exaltedResults.inexact,
+    ratio // Include ratio for the UI to use
+  };
+
+  return combined;
+}
