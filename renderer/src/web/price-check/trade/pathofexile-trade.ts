@@ -7,7 +7,8 @@ import {
 } from "@/web/price-check/filters/interfaces";
 import { setProperty as propSet } from "dot-prop";
 import { DateTime } from "luxon";
-import { Host } from "@/web/background/IPC";
+import { MainProcess } from '@/web/background/IPC';
+import type { IpcEventPayload } from '@ipc/types';
 import {
   TradeResponse,
   Account,
@@ -22,6 +23,8 @@ import { ModifierType } from "@/parser/modifiers";
 import { Cache } from "@/web/price-check/trade/Cache";
 import { Config, AppConfig } from "@/web/Config";
 import type { PriceCheckWidget } from "@/web/overlay/widgets";
+
+const CORS_PROXY = '/proxy'
 
 export const CATEGORY_TO_TRADE_ID = new Map([
   [ItemCategory.Map, "map"],
@@ -690,10 +693,29 @@ export function createTradeRequest(
 
 const cache = new Cache();
 
+let poesessid: string | undefined
+
+const controller = MainProcess.onEvent('MAIN->CLIENT::auth-complete', (e: IpcEventPayload<'MAIN->CLIENT::auth-complete'>) => {
+  console.log('[Trade] Auth complete event received:', { poesessid: e.poesessid?.substring(0, 5) + '...' })
+  poesessid = e.poesessid
+})
+
 export async function requestTradeResultList(
   body: TradeRequest,
   leagueId: string,
 ): Promise<SearchResult> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'User-Agent': 'ExiledExchange/2.0.0'
+  }
+
+  if (poesessid) {
+    console.log('[Trade] Using POESESSID for trade request:', { poesessid: poesessid.substring(0, 5) + '...' })
+    headers.Cookie = `POESESSID=${poesessid}`
+  } else {
+    console.log('[Trade] No POESESSID available for trade request')
+  }
+
   let data = cache.get<SearchResult>([body, leagueId]);
 
   if (!data) {
@@ -704,17 +726,11 @@ export async function requestTradeResultList(
 
     await RateLimiter.waitMulti(RATE_LIMIT_RULES.SEARCH);
 
-    const response = await Host.proxy(
-      `${getTradeEndpoint()}/api/trade2/search/${leagueId}`,
-      {
-        method: "POST",
-        headers: {
-          "Accept": "application/json",
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify(body),
-      },
-    );
+    const response = await fetch(`${CORS_PROXY}/www.pathofexile.com/api/trade/search/${leagueId}`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body)
+    });
     adjustRateLimits(RATE_LIMIT_RULES.SEARCH, response.headers);
 
     const _data = (await response.json()) as TradeResponse<SearchResult>;
@@ -739,20 +755,25 @@ export async function requestResults(
   resultIds: string[],
   opts: { accountName: string; divineExaltRatio?: number }
 ): Promise<PricingResult[]> {
+  const headers: Record<string, string> = {
+    'User-Agent': 'ExiledExchange/2.0.0'
+  }
+
+  if (poesessid) {
+    console.log('Using POESESSID for trade request')
+    headers.Cookie = `POESESSID=${poesessid}`
+  } else {
+    console.log('No POESESSID available for trade request')
+  }
+
   let data = cache.get<FetchResult[]>(resultIds);
 
   if (!data) {
     await RateLimiter.waitMulti(RATE_LIMIT_RULES.FETCH);
 
-    const response = await Host.proxy(
-      `${getTradeEndpoint()}/api/trade2/fetch/${resultIds.join(",")}?query=${queryId}`,
-      {
-        headers: {
-          "Accept": "application/json",
-          "Content-Type": "application/json"
-        }
-      }
-    );
+    const response = await fetch(`${CORS_PROXY}/www.pathofexile.com/api/trade/fetch/${resultIds.join(',')}`, {
+      headers
+    });
     adjustRateLimits(RATE_LIMIT_RULES.FETCH, response.headers);
 
     const _data = (await response.json()) as TradeResponse<{
@@ -778,11 +799,13 @@ export async function requestResults(
     // Calculate normalized price in divine if ratio is provided
     const normalizedPrice = opts.divineExaltRatio && priceCurrency === "exalted" 
       ? priceAmount / opts.divineExaltRatio 
-      : priceAmount;
+      : priceCurrency === "divine" 
+        ? priceAmount 
+        : undefined;
 
     // Format the display price to show original and normalized when needed
     const displayPrice = opts.divineExaltRatio && priceCurrency === "exalted"
-      ? `${normalizedPrice.toFixed(2)} divine (${priceAmount} exalted)`
+      ? `${(priceAmount / opts.divineExaltRatio).toFixed(2)} divine (${priceAmount} exalted)`
       : `${priceAmount} ${priceCurrency}`;
 
     return {
@@ -814,6 +837,11 @@ export async function requestResults(
           : "online"
         : "offline",
     };
+  }).sort((a, b) => {
+    // Sort by normalized price if available, otherwise by original price
+    const aPrice = a.normalizedPrice ?? (a.priceCurrency === "divine" ? a.priceAmount : Number.MAX_VALUE);
+    const bPrice = b.normalizedPrice ?? (b.priceCurrency === "divine" ? b.priceAmount : Number.MAX_VALUE);
+    return aPrice - bPrice;
   });
 }
 
@@ -881,90 +909,4 @@ function pseudoPseudoToQuery(id: string, stat: StatFilter) {
   filter.value = { ...getMinMax(stat.roll) };
   filter.disabled = stat.disabled;
   return filter;
-}
-
-export async function requestTradeResultListWithNormalization(
-  request: TradeRequest,
-  leagueId: string
-): Promise<SearchResult> {
-  const config = AppConfig<PriceCheckWidget>("price-check")!;
-  if (!config.normalizePricing) {
-    return await requestTradeResultList(request, leagueId);
-  }
-
-  // Add delay between batches to respect per-minute limit
-  const batchDelay = 5000; // 5 seconds between batches
-
-  // First batch: No price filter
-  const noFilterResult = await requestTradeResultList(request, leagueId);
-  await new Promise(resolve => setTimeout(resolve, batchDelay));
-
-  // Second batch: Divine filter
-  const divineRequest = structuredClone(request);
-  if (!divineRequest.query.filters.trade_filters) {
-    divineRequest.query.filters.trade_filters = { filters: {} };
-  }
-  divineRequest.query.filters.trade_filters.filters.price = { option: "divine" };
-  const divineResult = await requestTradeResultList(divineRequest, leagueId);
-  await new Promise(resolve => setTimeout(resolve, batchDelay));
-
-  // Third batch: Exalted filter
-  const exaltedRequest = structuredClone(request);
-  if (!exaltedRequest.query.filters.trade_filters) {
-    exaltedRequest.query.filters.trade_filters = { filters: {} };
-  }
-  exaltedRequest.query.filters.trade_filters.filters.price = { option: "exalted" };
-  const exaltedResult = await requestTradeResultList(exaltedRequest, leagueId);
-
-  return combineAndNormalizeResults(noFilterResult, divineResult, exaltedResult, config.divineExaltRatio);
-}
-
-function combineAndNormalizeResults(
-  allResults: SearchResult,
-  divineResults: SearchResult,
-  exaltedResults: SearchResult,
-  ratio: number
-): SearchResult {
-  // Create a Set to track seen IDs
-  const seenIds = new Set<string>();
-  const normalizedResults: Array<{ id: string; price: number }> = [];
-
-  // Process exalted results first (they should appear at the top if cheaper)
-  for (const id of exaltedResults.result) {
-    if (!seenIds.has(id)) {
-      seenIds.add(id);
-      // Convert exalt price to divine equivalent (e.g., 20 exalts at 89:1 = 0.22 divine)
-      normalizedResults.push({ id, price: 1/ratio });
-    }
-  }
-
-  // Process divine results
-  for (const id of divineResults.result) {
-    if (!seenIds.has(id)) {
-      seenIds.add(id);
-      normalizedResults.push({ id, price: 1 });
-    }
-  }
-
-  // Process remaining results from the unfiltered query
-  for (const id of allResults.result) {
-    if (!seenIds.has(id)) {
-      seenIds.add(id);
-      // These will be sorted last since we don't know their price
-      normalizedResults.push({ id, price: Number.MAX_VALUE });
-    }
-  }
-
-  // Sort by normalized price
-  normalizedResults.sort((a, b) => a.price - b.price);
-
-  const combined: SearchResult = {
-    id: `${allResults.id}-${divineResults.id}-${exaltedResults.id}`,
-    result: normalizedResults.map(r => r.id),
-    total: seenIds.size,
-    inexact: allResults.inexact || divineResults.inexact || exaltedResults.inexact,
-    ratio // Include ratio for the UI to use
-  };
-
-  return combined;
 }
