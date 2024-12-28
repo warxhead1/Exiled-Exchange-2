@@ -71,12 +71,6 @@
     <ui-checkbox class="mb-4" v-model="normalizePricing">{{
       t(":normalize_pricing")
     }}</ui-checkbox>
-    <div v-if="normalizePricing" class="mb-4 flex items-center">
-      <span class="mr-2">{{ t(":divine_exalt_ratio") }}</span>
-      <input v-model.number="divineExaltRatio"
-        class="rounded bg-gray-900 px-1 block w-16 mb-1 font-poe text-center" />
-      <span class="ml-2">{{ t(":chaos_per_divine") }}</span>
-    </div>
     <ui-checkbox class="mb-4" v-model="activateStockFilter">{{
       t(":select_stock")
     }}</ui-checkbox>
@@ -88,6 +82,23 @@
 
     <ui-checkbox class="mb-4" v-model="usePseudo">{{ t(":use_pseudo")
       }}</ui-checkbox>
+    <div v-if="normalizePricing" class="mb-4 flex items-center">
+      <span class="mr-2">{{ t(":divine_exalt_ratio") }}</span>
+      <input v-model.number="divineExaltRatio"
+        class="rounded bg-gray-900 px-1 block w-16 mb-1 font-poe text-center" />
+      <span class="ml-2">{{ t(":chaos_per_divine") }}</span>
+      <button 
+        @click="requestAuth" 
+        class="ml-4 px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded"
+        :class="{ 'opacity-50 cursor-not-allowed': isAuthenticating }"
+        :disabled="isAuthenticating"
+      >
+        {{ isAuthenticating ? t('Authenticating...') : t('Authenticate with POE') }}
+      </button>
+      <div v-if="poesessid" class="text-green-400 ml-2">
+        {{ t('Authenticated') }}
+      </div>
+    </div>
     <div class="mb-4" :class="{ 'p-2 bg-orange-600 rounded': builtinBrowser }">
       <ui-checkbox v-model="builtinBrowser">{{
         t(":enable_browser")
@@ -130,15 +141,17 @@
 </template>
 
 <script lang="ts">
-import { defineComponent, computed } from "vue";
+import { defineComponent, computed, ref } from "vue";
 import { useI18nNs } from "@/web/i18n";
 import UiRadio from "@/web/ui/UiRadio.vue";
 import UiCheckbox from "@/web/ui/UiCheckbox.vue";
 import UiToggle from "@/web/ui/UiToggle.vue";
 import UiErrorBox from "@/web/ui/UiErrorBox.vue";
-import { configModelValue, configProp, findWidget } from "./utils";
+import { configModelValue, configProp, findWidget } from "@/web/settings/utils";
 import type { PriceCheckWidget } from "@/web/overlay/interfaces";
-import { useLeagues } from "../background/Leagues";
+import { useLeagues } from "@/web/background/Leagues";
+import { MainProcess } from "@/web/background/IPC";
+import type { IpcEventPayload } from "@ipc/types";
 
 export default defineComponent({
   name: "price_check.name",
@@ -152,8 +165,36 @@ export default defineComponent({
     const leagues = useLeagues();
     const { t } = useI18nNs("price_check");
 
+    const poesessid = ref<string>()
+    const isAuthenticating = ref(false)
+
+    function requestAuth () {
+      if (isAuthenticating.value) return
+      
+      isAuthenticating.value = true
+      poesessid.value = undefined
+      
+      MainProcess.sendEvent({
+        name: 'CLIENT->MAIN::request-auth',
+        payload: undefined
+      })
+    }
+
+    const controller = MainProcess.onEvent('MAIN->CLIENT::auth-complete', 
+      (e: IpcEventPayload<'MAIN->CLIENT::auth-complete'>) => {
+        isAuthenticating.value = false
+        poesessid.value = e.poesessid
+      }
+    )
+
+    // Load leagues when component is mounted
+    leagues.load()
+
     return {
       t,
+      requestAuth,
+      poesessid,
+      isAuthenticating,
       leagueId: configModelValue(() => props.config, "leagueId"),
       customLeagueId: computed<string>({
         get: () =>

@@ -7,6 +7,7 @@ import { startServer, eventPipe, server } from "./server";
 import { Logger } from "./RemoteLogger";
 import { GameWindow } from "./windowing/GameWindow";
 import { OverlayWindow } from "./windowing/OverlayWindow";
+import { AuthWindow } from "./windowing/AuthWindow";
 import { GameConfig } from "./host-files/GameConfig";
 import { Shortcuts } from "./shortcuts/Shortcuts";
 import { AppUpdater } from "./AppUpdater";
@@ -34,6 +35,7 @@ app.on("ready", async () => {
   const poeWindow = new GameWindow();
   const appUpdater = new AppUpdater(eventPipe);
   const _httpProxy = new HttpProxy(server, logger);
+  const authWindow = new AuthWindow(eventPipe, logger);
 
   setTimeout(
     async () => {

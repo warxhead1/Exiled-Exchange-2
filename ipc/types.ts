@@ -1,3 +1,10 @@
+import type { AuthEvents } from './auth'
+
+export interface Event<TName extends string, TPayload = undefined> {
+  name: TName
+  payload: TPayload
+}
+
 export interface HostConfig {
   shortcuts: ShortcutAction[]
   restoreClipboard: boolean
@@ -77,7 +84,9 @@ export type IpcEvent =
   IpcItemText |
   IpcOcrText |
   IpcConfigChanged |
-  IpcUserAction
+  IpcUserAction |
+  // auth events:
+  AuthEvents
 
 export type IpcEventPayload<Name extends IpcEvent['name'], T extends IpcEvent = IpcEvent> =
   T extends { name: Name, payload: infer P } ? P : never
@@ -175,8 +184,3 @@ type IpcUserAction =
     action: 'stash-search'
     text: string
   }>
-
-interface Event<TName extends string, TPayload = undefined> {
-  name: TName
-  payload: TPayload
-}

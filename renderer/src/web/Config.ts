@@ -124,6 +124,7 @@ export interface Config {
   fontSize: number
   showAttachNotification: boolean
   overlayAlwaysClose: boolean
+  normalizePrices: boolean
 }
 
 export const defaultConfig = (): Config => ({
@@ -343,6 +344,7 @@ export const defaultConfig = (): Config => ({
       images: [{ id: 1, url: "syndicate.jpg" }],
     } as widget.ImageStripWidget,
   ],
+  normalizePrices: false
 });
 
 function upgradeConfig(_config: Config): Config {
