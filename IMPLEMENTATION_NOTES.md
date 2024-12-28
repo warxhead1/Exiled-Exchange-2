@@ -1,49 +1,71 @@
-# Price Filtering Implementation Plan
+# Implementation Notes
 
-## Goals
-- ✅ Add price filtering for both Divine and Exalted orbs
-- ✅ Allow setting a Divine:Exalt ratio
-- ✅ Combine and sort results from both currencies
-- ✅ Add rate limiting between requests
+## Authentication Feature (2024-01)
 
-## Implementation Status
+### Overview
+Added authentication with Path of Exile's trade site to enable authenticated trade requests. This allows users to see their own listings and access full trade functionality.
 
-### Completed Features
-1. Price Normalization
-   - Added support for making three separate requests (no filter, divine, exalted)
-   - Implemented proper rate limiting with 5-second delays between requests
-   - Added result combination and sorting based on normalized prices
-   - Added display of original price alongside normalized price
+### Key Components
 
-2. Rate Limiting
-   - Added proper delays between batches to respect API rate limits
-   - Implemented error handling for rate limit exceeded cases
-   - Added proper request queuing and batching
+#### AuthWindow Class
+- Implemented in `main/src/windowing/AuthWindow.ts`
+- Creates a dedicated window for PoE authentication
+- Handles cookie extraction and session management
+- Includes retry logic for loading the login page
 
-3. UI Updates
-   - Added normalized price display in results
-   - Shows original price in parentheses when normalized
-   - Proper sorting based on normalized values
+#### IPC Events
+- Added `MAIN->CLIENT::auth-complete` event to communicate successful authentication
+- Passes `POESESSID` securely between main and renderer processes
 
-### Files Modified
-1. `renderer/src/web/price-check/trade/pathofexile-trade.ts`
-   - Added `requestTradeResultListWithNormalization` function
-   - Added `combineAndNormalizeResults` function
-   - Updated `PricingResult` interface to include normalized prices
+#### Trade API Integration
+- Modified `renderer/src/web/price-check/trade/pathofexile-trade.ts` to:
+  - Store and use `POESESSID` for authenticated requests
+  - Add debug logging for authentication flow
+  - Handle both authenticated and unauthenticated states
 
-2. `renderer/src/web/price-check/trade/TradeListing.vue`
-   - Updated to handle normalized pricing display
-   - Added support for showing both original and normalized prices
+### UI Changes
+- Added "Authenticate with POE" button in settings
+- Implemented visual feedback for authentication state
+- Cleaned up price normalization UI elements
 
-## Testing
-1. ✅ Test single currency requests
-2. ✅ Test multiple currency requests with rate limiting
-3. ✅ Verify results are properly normalized and sorted
-4. ✅ Check error handling and rate limit compliance
-5. ✅ Verify UI feedback and price display
+### Debug Features
+- Added logging for authentication events
+- Track `POESESSID` usage in trade requests
+- Monitor authentication window state
 
-## Future Improvements
-1. Consider adding more sophisticated rate limiting strategies
-2. Add caching for normalized results
-3. Consider adding more currency support beyond Divine/Exalted
-4. Add more user configuration options for normalization behavior 
+### Security Considerations
+- `POESESSID` is never exposed in logs (only first 5 chars for debugging)
+- Secure cookie handling between processes
+- Session management follows PoE's security requirements
+
+### Future Improvements
+- Implement session persistence
+- Add automatic re-authentication
+- Enhance error handling and user feedback
+- Consider rate limit adjustments for authenticated users 
+
+### Price Normalization
+- Implemented efficient single-request approach for price normalization
+- Added support for Divine:Exalt ratio conversion
+- Results are sorted by normalized prices automatically
+- Preserved original price display while showing normalized values
+- Flexible architecture allows for future multi-request scenarios
+
+### Recent Updates (2024-01)
+- Improved error handling in authentication process
+- Added retry mechanism for auth window loading
+- Enhanced debug logging throughout authentication flow
+- Implemented price normalization with single-request optimization
+- Cleaned up UI elements and removed duplicate ratio inputs
+- Added detailed logging for trade request authentication status
+
+### Known Issues
+- Settings persistence between Vite/Electron restarts
+- Auth window behavior with cached sessions
+- Need to verify normalized price sorting with large result sets
+
+### Next Steps
+- Implement settings persistence
+- Add session management improvements
+- Consider multi-request scenarios for specific use cases
+- Enhance error handling and user feedback 
