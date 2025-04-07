@@ -24,18 +24,18 @@ export const useLeagues = createGlobalState(() => {
   const tradeLeagues = shallowRef<League[]>([]);
 
   const DEFAULT_POE2_LEAGUES: ApiLeague[] = [
-    { id: "Standard", rules: [] },
+    { id: "Dawn of the Hunt", rules: [] },
     {
-      id: "Hardcore",
+      id: "HC Dawn of the Hunt",
       rules: [
         {
           id: "Hardcore",
         },
       ],
     },
-    { id: "Dawn of the Hunt", rules: [] },
+    { id: "Standard", rules: [] },
     {
-      id: "HC Dawn of the Hunt",
+      id: "Hardcore",
       rules: [
         {
           id: "Hardcore",
@@ -94,11 +94,11 @@ export const useLeagues = createGlobalState(() => {
         (league) => league.id === selectedId.value,
       );
       if (!leagueIsAlive && !isPrivateLeague(selectedId.value ?? "")) {
-        if (tradeLeagues.value.length > 2) {
-          const TMP_CHALLENGE = 2;
+        if (tradeLeagues.value.length > 1) {
+          const TMP_CHALLENGE = 0;
           selectedId.value = tradeLeagues.value[TMP_CHALLENGE].id;
         } else {
-          const STANDARD = 0;
+          const STANDARD = 2;
           selectedId.value = tradeLeagues.value[STANDARD].id;
         }
       }
